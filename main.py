@@ -14,21 +14,21 @@ Graph = Dict[Cell, Tuple[Color, Set[Cell]]]
 
 
 # Printing functions
-
-
 def usage():
     """Print usage"""
     print("Sudoku solver and generator")
     print("USAGE: python main.py <command>")
     print(
         """EX:
-          python main.py check_valid example_board.txt 3
-          python main.py solve 3 20"""
+          python main.py sol example_board.txt 3
+          python main.py gen 3 20
+          python main.py genAndSol 3 20"""
     )
     print(
         """COMMANDS:
-          check_valid <file_path> <base>
-          solve <base> <number_of_empty_squares>"""
+          solve <file_path> <base>
+          generate <base> <number_of_empty_squares>
+          genAndSol <base> <number_of_empty_squares>"""
     )
 
 
@@ -39,7 +39,7 @@ def print_graph(graph: Graph):
 
 
 def divide_list(l: List[Any], size: int) -> List[List[Any]]:
-    """Divide len(l) list into a sizexsize list"""
+    """Divide len(l) list into a size x size list"""
     new_list = []
     for n in range(0, len(l), size):
         new_list.append(l[n : n + size])
@@ -48,6 +48,7 @@ def divide_list(l: List[Any], size: int) -> List[List[Any]]:
 
 
 def print_simple_board(board: Graph):
+    """Print board in a simple way for debug"""
     side = int(sqrt(len(board)))
     nums_list = [str(board[n][0]) for n in board.keys()]
     nums = divide_list(nums_list, side)
@@ -67,7 +68,7 @@ def board_to_string(board: Graph):
     line3 = expandLine("╠═══╪═══╬═══╣", base)
     line4 = expandLine("╚═══╧═══╩═══╝", base)
 
-    symbols = " 1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    symbols = " 123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
     nums_list = [symbols[board[n][0]] for n in sorted(board.keys())]
     nums = [[""] + l for l in divide_list(nums_list, side)]
@@ -153,6 +154,13 @@ def get_cell_color(board: Graph, cell: Cell) -> Color:
     return board[cell][0]
 
 
+def set_cell_color(board: Graph, cell: Cell, color: Color) -> Graph:
+    """Set color to new board and return a new one"""
+    new_board = board.copy()
+    new_board[cell] = (color, new_board[cell][1])
+    return new_board
+
+
 def get_cell_neighbors(board: Graph, cell: Cell) -> Iterable:
     """Return cell neighbors"""
     return board[cell][1]
@@ -172,41 +180,44 @@ def is_board_valid(board: Graph) -> bool:
     return True
 
 
-def try_color_graph(
-    board: Graph, colors: Set[Any]
-) -> Tuple[Optional[Graph], List[str]]:
-    """Color algorithm in a graph"""
-    blank_vertices_list = [v for v in board.keys() if board[v][0] == BLANK]
+def get_empty_squares(board: Graph) -> List[Cell]:
+    return [cell for cell in board.keys() if board[cell][0] == BLANK]
 
-    available_colors = {}
 
-    steps_in_strings = []
+def can_color(board: Graph, cell: Cell, color: Color) -> bool:
+    for neighbor in get_cell_neighbors(board, cell):
+        if get_cell_color(board, neighbor) == color:
+            return False
 
-    for v in blank_vertices_list:
-        for color in colors:
-            available_colors[color] = True
+    return True
 
-        neighbors = board[v][1]
 
-        for n in neighbors:
-            n_color = board[n][0]
-            if n_color != BLANK:
-                available_colors[n_color] = False
+def back_track_solution(
+    board: Graph, colors: Set[Color], steps: List[str] = []
+) -> Tuple[bool, Graph, List[str]]:
+    """Performs a back_track algorithm tring to color the board"""
 
-        current_color = None
+    # if board has none empty squares return board
+    empty_squares = get_empty_squares(board)
+    if len(empty_squares) == 0:
+        return is_board_valid(board), board, steps
 
-        for color in available_colors.keys():
-            if available_colors[color]:
-                current_color = color
+    cell_to_color = empty_squares[0]
 
-        if current_color is None:
-            return None, []
+    # Try every color that works
+    for col in colors:
+        if can_color(board, cell_to_color, col):
+            new_board = set_cell_color(board, cell_to_color, col)
+            possible_to_solve, solved_board, steps = back_track_solution(
+                new_board, colors, steps
+            )
 
-        board[v] = (current_color, board[v][1])
+            # Check if no need to Back track
+            if possible_to_solve:
+                return True, solved_board, [board_to_string(new_board)] + steps
 
-        steps_in_strings.append(board_to_string(board))
-
-    return board, steps_in_strings
+    # Back track
+    return False, board, steps
 
 
 def pattern(row: int, collumn: int, base: int):
@@ -246,24 +257,17 @@ def remove_squares_from_board(
     return board
 
 
-def generate_and_solve_sudoku_game(
-    base: int, empties: int
-) -> Tuple[Graph, Graph, List[str]]:
+def generate_sudoku_game(base: int, empties: int) -> Tuple[Graph]:
     """Generate a valid solvable sudoku game"""
-    board = None
-    while board is None:
-        board_matrix = generate_random_full_board(base)
-        empty_board_matrix = remove_squares_from_board(board_matrix, base, empties)
-        board, steps = try_color_graph(
-            matrix_to_graph(empty_board_matrix), set(range(1, 10))
-        )
+    board_matrix = generate_random_full_board(base)
+    empty_board_matrix = remove_squares_from_board(board_matrix, base, empties)
 
-    return matrix_to_graph(empty_board_matrix), board, steps
+    return matrix_to_graph(empty_board_matrix)
 
 
 def main(args: List[str]):
 
-    commands = ["check_valid", "solve"]
+    commands = ["sol", "gen", "genAndSol"]
 
     if len(args) < 4:
         usage()
@@ -273,47 +277,51 @@ def main(args: List[str]):
         usage()
         exit(1)
 
-    if args[1] == "check_valid":
+    if args[1] == "sol":
         base = int(args[3])
         graph = file_to_graph(args[2], base)
-        valid = is_board_valid(graph)
+        valid, _, steps = back_track_solution(graph, set(range(1, (base * base) + 1)))
 
         print("\n-----------------------------------")
-        print("SUDOKU GENERATOR AND SOLVER\n")
+        print("SUDOKU SOLVER\n")
         print("BOARD:")
         print(board_to_string(graph))
         print(f"VALID = {valid}")
 
-    elif args[1] == "solve":
-        base = int(args[2])
-        empty_values = int(args[3])
-
-        board, solved_board, steps = generate_and_solve_sudoku_game(base, empty_values)
-
-        if is_board_valid(solved_board):
-            # Sudoku board generator
-            print("\n-----------------------------------")
-            print("SUDOKU GENERATOR AND SOLVER")
-            print(
-                f"\nBoard {base * base}x{base * base} with {empty_values} empty squares:"
-            )
-            print(board_to_string(board))
-
+        if valid:
             print("\nSOLVER")
             for i, b in enumerate(steps):
                 print(f"step {i + 1}:")
                 print(b)
                 print()
 
-        else:
-            main()
+    elif args[1] == "gen":
+        base = int(args[2])
+        empty_values = int(args[3])
+
+        board = generate_sudoku_game(base, empty_values)
+        print("\n-----------------------------------")
+        print("SUDOKU GENERATOR")
+        print(f"\nBoard {base * base}x{base * base} with {empty_values} empty squares:")
+        print(board_to_string(board))
+
+    elif args[1] == "genAndSol":
+        base = int(args[2])
+        empty_values = int(args[3])
+
+        board = generate_sudoku_game(base, empty_values)
+        print("\n-----------------------------------")
+        print("SUDOKU GENERATOR AND SOLVER")
+        print(f"\nBoard {base * base}x{base * base} with {empty_values} empty squares:")
+        print(board_to_string(board))
+
+        _, _, steps = back_track_solution(board, set(range(1, (base * base) + 1)))
+        print("\nSOLVER")
+        for i, b in enumerate(steps):
+            print(f"step {i + 1}:")
+            print(b)
+            print()
 
 
 if __name__ == "__main__":
     main(argv)
-
-
-#  1  2  3  4          1: 2 3 4 5 9 13 6
-#  5  6  7  8     ->   2: 1 3 4 6 10 14 5
-#  9 10 11 12          3: 1 2 4 7 11 15 8
-# 13 14 15 16
